@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "community.pomodoro",
+  "name": "Pomodoro",
+  "version": "0.1.0",
+  "author": "devmobasa",
+  "description": "Focus timer in the bar: work/break cycles, auto Do Not Disturb, restart-proof sessions",
+  "license": "MIT",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "PomodoroWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Pomodoro",
+    "description": "Work/break focus timer with auto-DND",
+    "category": "Plugin",
+    "allowMultiple": false,
+    "defaultSection": "center"
+  }
+}
