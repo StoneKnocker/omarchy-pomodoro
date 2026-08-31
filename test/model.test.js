@@ -33,58 +33,99 @@ s = model.resume(s, T0 + 60 * 60000)
 assert.equal(model.isPaused(s), false)
 assert.equal(model.remainingMs(s, T0 + 60 * 60000), 20 * 60000)
 
-// Completing work increments cycle and today, then starts the break.
+// Completing work increments cycle and today, then idles with a pending break.
 s = model.startPhase(model.idleState(), 'work', T0, config)
 s = model.completePhase(s, T0 + 25 * 60000, config)
-assert.equal(s.phase, 'break')
+assert.equal(s.phase, 'idle', 'the next phase does not auto-start')
+assert.equal(s.pendingPhase, 'break')
 assert.equal(s.cycleCount, 1)
 assert.equal(s.todayCount, 1)
+assert.equal(s.endsAtMs, 0)
+assert.equal(model.phaseToStart(s), 'break')
+assert.deepEqual(model.completionNotice('work', s), {
+  title: 'Focus complete',
+  body: '1 done today. Click the bar to start your break.'
+})
 
-// Every fourth work earns the long break.
+// An unfinished work period is not counted as done.
+const unfinished = model.startPhase(model.idleState(), 'work', T0, config)
+const interrupted = model.completePhase(unfinished, T0 + 5 * 60000, config)
+assert.equal(interrupted.todayCount, 0, 'cutting a work period short does not count')
+assert.equal(interrupted.cycleCount, 0)
+assert.equal(interrupted.phase, 'idle')
+assert.equal(interrupted.pendingPhase, 'break')
+
+// Skip jumps to the next phase immediately and never counts unfinished work.
+let skipped = model.startPhase(model.idleState(), 'work', T0, config)
+skipped = model.skipPhase(skipped, T0 + 5 * 60000, config)
+assert.equal(skipped.phase, 'break')
+assert.equal(skipped.todayCount, 0)
+assert.equal(skipped.cycleCount, 0)
+skipped = model.skipPhase(skipped, T0 + 6 * 60000, config)
+assert.equal(skipped.phase, 'work')
+assert.equal(skipped.todayCount, 0)
+
+// Every fourth finished work earns a pending long break.
 let s4 = model.idleState()
 for (let i = 0; i < 4; i++) {
-  s4 = model.startPhase(s4, 'work', T0, config)
-  s4 = model.completePhase(s4, T0 + 1000, config)
+  s4 = model.startPhase(s4, model.phaseToStart(s4), T0, config)
+  assert.equal(s4.phase, 'work')
+  s4 = model.completePhase(s4, T0 + 25 * 60000, config)
   if (i < 3) {
-    assert.equal(s4.phase, 'break', `cycle ${i + 1} takes a short break`)
-    s4 = model.completePhase(s4, T0 + 2000, config)
-    assert.equal(s4.phase, 'work')
+    assert.equal(s4.phase, 'idle')
+    assert.equal(s4.pendingPhase, 'break', `cycle ${i + 1} takes a short break`)
+    s4 = model.startPhase(s4, s4.pendingPhase, T0, config)
+    assert.equal(s4.phase, 'break')
+    s4 = model.completePhase(s4, T0 + 5 * 60000, config)
+    assert.equal(s4.phase, 'idle')
+    assert.equal(s4.pendingPhase, 'work')
   }
 }
-assert.equal(s4.phase, 'longBreak')
+assert.equal(s4.phase, 'idle')
+assert.equal(s4.pendingPhase, 'longBreak')
 assert.equal(s4.todayCount, 4)
+assert.deepEqual(model.completionNotice('work', s4), {
+  title: 'Focus complete',
+  body: '4 done today. Click the bar to start your long break.'
+})
 
-// Breaks do not increment counters.
-const afterBreak = model.completePhase(s4, T0 + 3000, config)
-assert.equal(afterBreak.phase, 'work')
+// Breaks do not increment counters; completing one idles with pending work.
+s4 = model.startPhase(s4, s4.pendingPhase, T0, config)
+assert.equal(s4.phase, 'longBreak')
+const afterBreak = model.completePhase(s4, T0 + 15 * 60000, config)
+assert.equal(afterBreak.phase, 'idle')
+assert.equal(afterBreak.pendingPhase, 'work')
 assert.equal(afterBreak.todayCount, 4)
+assert.equal(model.completionNotice('longBreak', afterBreak).title, 'Long break over')
 
 // ---- restart reconciliation -------------------------------------------------
 
-// A work session that fully elapsed while the shell was down completes into
-// its break, and the counters advance exactly once.
+// A work session that fully elapsed while the shell was down counts once
+// and stops at idle — it does not auto-start the break.
 s = model.startPhase(model.idleState(), 'work', T0, config)
 let resolved = model.resolveState(s, T0 + 26 * 60000, config)
-assert.equal(resolved.phase, 'break')
+assert.equal(resolved.phase, 'idle')
+assert.equal(resolved.pendingPhase, 'break')
 assert.equal(resolved.todayCount, 1)
-assert.equal(model.remainingMs(resolved, T0 + 26 * 60000), 4 * 60000,
-  'the break started when the work actually ended')
+assert.equal(model.remainingMs(resolved, T0 + 26 * 60000), 0)
 
-// Long absence chains through several phases without runaway.
+// Long absence still completes only the phase that was actually running.
 resolved = model.resolveState(s, T0 + 3 * 60 * 60000, config)
-assert.notEqual(resolved.phase, 'idle')
-assert.ok(resolved.cycleCount >= 3, 'multiple cycles completed while away')
+assert.equal(resolved.phase, 'idle')
+assert.equal(resolved.todayCount, 1)
+assert.equal(resolved.cycleCount, 1, 'later cycles are not invented while away')
 
 // A paused session never advances.
 s = model.pause(model.startPhase(model.idleState(), 'work', T0, config), T0 + 1000)
 resolved = model.resolveState(s, T0 + 9 * 60 * 60000, config)
 assert.equal(model.isPaused(resolved), true)
+assert.equal(resolved.todayCount, 0, 'a paused interrupt is not done')
 
 // The daily counter resets on a new day.
 s = model.startPhase(model.idleState(), 'work', T0, config)
-s = model.completePhase(s, T0 + 1000, config)
+s = model.completePhase(s, T0 + 25 * 60000, config)
 assert.equal(s.todayCount, 1)
-const nextDay = model.withTodayTest ? null : model.resolveState(
+const nextDay = model.resolveState(
   model.startPhase(s, 'work', T0 + 24 * 60 * 60000, config),
   T0 + 24 * 60 * 60000 + 1, config)
 assert.equal(nextDay.todayCount, 0, 'a new day starts the counter fresh')
@@ -108,5 +149,8 @@ assert.equal(model.formatRemaining(0), '0:00')
 assert.equal(model.formatRemaining(61000), '1:01')
 assert.ok(model.glyphFor('work').length > 0)
 assert.equal(model.labelFor('longBreak'), 'Long break')
+assert.equal(model.startLabel('break'), 'a break')
+assert.equal(model.parseState('{"phase":"idle","pendingPhase":"longBreak"}').pendingPhase, 'longBreak')
+assert.equal(model.parseState('{"phase":"idle","pendingPhase":"nap"}').pendingPhase, 'work')
 
 console.log('ok - pomodoro model')

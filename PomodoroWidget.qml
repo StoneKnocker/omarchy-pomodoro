@@ -12,6 +12,9 @@ import "model/PomodoroModel.js" as PomodoroModel
 // the one on the first screen — runs side effects (phase transitions, DND,
 // notifications), so nothing fires twice on multi-monitor setups.
 //
+// A phase that hits 0 returns to idle and notifies; the next round starts
+// only when the user clicks. Skip and reset do not count unfinished work.
+//
 // Left click: start / pause / resume. Right click: skip phase.
 // Middle click: reset. Auto-DND silences notifications during focus.
 BarWidget {
@@ -99,7 +102,8 @@ BarWidget {
   function startOrToggle() {
     var now = Date.now()
     if (session.phase === "idle") {
-      var started = PomodoroModel.startPhase(session, "work", now, config)
+      var started = PomodoroModel.startPhase(
+        session, PomodoroModel.phaseToStart(session), now, config)
       started.dndWasOn = dndActive()
       applyDnd(started)
       persist(started)
@@ -112,7 +116,7 @@ BarWidget {
 
   function skipPhase() {
     if (session.phase === "idle") return
-    var next = PomodoroModel.completePhase(session, Date.now(), config)
+    var next = PomodoroModel.skipPhase(session, Date.now(), config)
     applyDnd(next)
     persist(next)
   }
@@ -121,6 +125,7 @@ BarWidget {
     var idle = PomodoroModel.idleState()
     idle.todayCount = session.todayCount
     idle.todayDate = session.todayDate
+    idle.dndWasOn = session.dndWasOn
     applyDnd(idle)
     persist(idle)
   }
@@ -149,18 +154,18 @@ BarWidget {
 
   function notifyTransition(fromPhase, state) {
     if (!leader || fromPhase === state.phase) return
-    var title = PomodoroModel.labelFor(state.phase)
-    var body = state.phase === "work"
-      ? "Focus for " + config.workMinutes + " minutes (" + state.todayCount + " done today)"
-      : (state.phase === "idle" ? "Session ended"
-        : "Take " + Math.round(PomodoroModel.phaseDurationMs(state.phase, config) / 60000) + " minutes")
-    notifyProcess.command = ["notify-send", "-a", "Pomodoro", title, body]
+    var notice = PomodoroModel.completionNotice(fromPhase, state)
+    if (!notice) return
+    // App name "notify-send" + critical is the shell's DND-bypass so the
+    // reminder is visible even if the user had Do Not Disturb on before
+    // the session (applyDnd restores that preference first).
+    notifyProcess.command = ["notify-send", "-u", "critical", "-a", "notify-send", notice.title, notice.body]
     notifyProcess.running = true
   }
 
   Process {
     id: notifyProcess
-    command: ["notify-send", "-a", "Pomodoro", "Pomodoro", ""]
+    command: ["notify-send", "-u", "critical", "-a", "notify-send", "Pomodoro", ""]
   }
 
   // Scriptable surface: omarchy-shell community.pomodoro toggle|skip|reset|status
@@ -202,7 +207,9 @@ BarWidget {
       ? PomodoroModel.glyphFor("idle")
       : PomodoroModel.glyphFor(root.session.phase) + " " + PomodoroModel.formatRemaining(root.remaining)
     tooltipText: root.session.phase === "idle"
-      ? "Pomodoro — click to start a focus session (" + root.session.todayCount + " done today)"
+      ? "Pomodoro — click to start "
+        + PomodoroModel.startLabel(PomodoroModel.phaseToStart(root.session))
+        + " (" + root.session.todayCount + " done today)"
       : PomodoroModel.labelFor(root.session.phase)
         + (PomodoroModel.isPaused(root.session) ? " (paused)" : "")
         + " — " + root.session.todayCount + " done today · right-click skips, middle resets"

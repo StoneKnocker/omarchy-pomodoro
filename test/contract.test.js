@@ -42,6 +42,12 @@ assert.match(widget, /readonly property bool leader/, 'one instance owns side ef
 assert.match(widget, /if \(!leader \|\| !config\.autoDnd\) return/, 'DND is leader-gated')
 assert.match(widget, /if \(!leader \|\| fromPhase === state\.phase\) return/,
   'notifications are leader-gated')
+assert.match(widget, /PomodoroModel\.completionNotice/,
+  'end-of-phase copy comes from the model')
+assert.match(widget, /PomodoroModel\.skipPhase/,
+  'skip is a distinct path that does not count unfinished work')
+assert.match(widget, /PomodoroModel\.phaseToStart/,
+  'idle click starts the pending phase rather than always work')
 
 // DND integration goes through the first-party service, never a subprocess.
 assert.match(widget, /serviceFor\("omarchy\.notifications"\)/)
@@ -49,8 +55,9 @@ assert.match(widget, /setDoNotDisturb/)
 assert.match(widget, /dndWasOn/, 'the pre-session DND state is restored, not blindly cleared')
 
 // The only subprocess is the transition notification, argument-array only.
+// Critical + app-name notify-send is how omarchy-shell lets a toast through DND.
 assert.equal((widget.match(/\bProcess\s*\{/g) || []).length, 1)
-assert.match(widget, /\["notify-send", "-a", "Pomodoro"/)
+assert.match(widget, /\["notify-send", "-u", "critical", "-a", "notify-send"/)
 assert.doesNotMatch(widget, /execDetached|bash -c|sh -c/)
 
 // Scriptable surface.

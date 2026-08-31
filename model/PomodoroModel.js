@@ -3,10 +3,13 @@
 //
 // The whole session lives in a small state object persisted to a state file:
 //   { phase, endsAtMs, pausedRemainingMs, cycleCount, todayCount, todayDate,
-//     dndWasOn }
+//     dndWasOn, pendingPhase }
 // Remaining time derives from endsAtMs against the wall clock, so a shell
-// restart mid-session resumes exactly; a session that fully elapsed while
-// the shell was down still counts.
+// restart mid-session resumes exactly. A phase that fully elapsed while the
+// shell was down still counts as done — but the next phase does not auto-start;
+// the chip returns to idle with pendingPhase set, and a notification asks the
+// user to click when they are ready. Only a work phase that actually reached
+// 0 remaining increments todayCount / cycleCount.
 
 var PHASES = ["idle", "work", "break", "longBreak"]
 
@@ -26,7 +29,8 @@ function idleState() {
     cycleCount: 0,
     todayCount: 0,
     todayDate: "",
-    dndWasOn: false
+    dndWasOn: false,
+    pendingPhase: "work"
   }
 }
 
@@ -78,6 +82,11 @@ function withToday(state, nowMs) {
   return next
 }
 
+function normalizedPending(phase) {
+  if (phase === "break" || phase === "longBreak" || phase === "work") return phase
+  return "work"
+}
+
 function cloneState(state) {
   return {
     phase: state.phase,
@@ -86,8 +95,15 @@ function cloneState(state) {
     cycleCount: state.cycleCount,
     todayCount: state.todayCount,
     todayDate: state.todayDate,
-    dndWasOn: state.dndWasOn === true
+    dndWasOn: state.dndWasOn === true,
+    pendingPhase: normalizedPending(state.pendingPhase)
   }
+}
+
+// Phase to begin from idle: the one waiting after a completed (or skipped)
+// phase, otherwise a fresh focus session.
+function phaseToStart(state) {
+  return normalizedPending(state && state.pendingPhase)
 }
 
 // Start a phase now.
@@ -125,29 +141,69 @@ function remainingMs(state, nowMs) {
   return Math.max(0, state.endsAtMs - Number(nowMs))
 }
 
-// Advance past a completed phase. Returns the new state; the caller reads
-// state.phase to decide side effects (DND, notification).
+// Natural completion of a phase whose remaining time has hit 0. Counts a
+// finished work session, then returns to idle with pendingPhase set so the
+// next round does not auto-start.
 function completePhase(state, nowMs, config) {
-  var next = withToday(state, nowMs)
+  var next = withToday(cloneState(state), nowMs)
   if (next.phase === "idle") return next
-  if (next.phase === "work") {
+  var finished = remainingMs(next, nowMs) <= 0
+  if (next.phase === "work" && finished) {
     next.cycleCount = next.cycleCount + 1
     next.todayCount = next.todayCount + 1
   }
-  var following = nextPhase(next.phase, next.cycleCount, config)
+  var following
+  if (next.phase === "work") {
+    following = finished ? nextPhase("work", next.cycleCount, config) : "break"
+  } else {
+    following = "work"
+  }
+  next.pendingPhase = following
+  next.phase = "idle"
+  next.endsAtMs = 0
+  next.pausedRemainingMs = 0
+  return next
+}
+
+// User skip: jump to the next phase immediately without treating an
+// unfinished work period as done. Incomplete work always yields a short
+// break, never a long break.
+function skipPhase(state, nowMs, config) {
+  var next = withToday(cloneState(state), nowMs)
+  if (next.phase === "idle") return next
+  var following = next.phase === "work" ? "break" : "work"
+  next.pendingPhase = following
   return startPhase(next, following, nowMs, config)
 }
 
+// Copy for the end-of-phase desktop notification. null if this transition
+// is not a completion (e.g. idle → work on user click).
+function completionNotice(fromPhase, state) {
+  if (fromPhase === "work") {
+    var nextLabel = state.pendingPhase === "longBreak" ? "your long break" : "your break"
+    return {
+      title: "Focus complete",
+      body: state.todayCount + " done today. Click the bar to start " + nextLabel + "."
+    }
+  }
+  if (fromPhase === "break") {
+    return { title: "Break over", body: "Click the bar to start focusing." }
+  }
+  if (fromPhase === "longBreak") {
+    return { title: "Long break over", body: "Click the bar to start focusing." }
+  }
+  return null
+}
+
 // Reconcile persisted state against the wall clock after a load: a running
-// phase whose end passed while we were away completes (possibly several
-// times), so the chip never resurrects a stale countdown.
+// phase whose end passed while we were away completes once (and stops at
+// idle). We never chain through later phases — that would auto-start and
+// inflate today's count.
 function resolveState(state, nowMs, config) {
   var next = withToday(state, nowMs)
-  var guard = 0
-  while (next.phase !== "idle" && !isPaused(next)
-      && next.endsAtMs > 0 && next.endsAtMs <= Number(nowMs) && guard < 64) {
+  if (next.phase !== "idle" && !isPaused(next)
+      && next.endsAtMs > 0 && next.endsAtMs <= Number(nowMs)) {
     next = completePhase(next, next.endsAtMs, config)
-    guard += 1
   }
   return next
 }
@@ -168,6 +224,7 @@ function parseState(text) {
   }
   if (typeof parsed.todayDate === "string") state.todayDate = parsed.todayDate
   state.dndWasOn = parsed.dndWasOn === true
+  state.pendingPhase = normalizedPending(parsed.pendingPhase)
   return state
 }
 
@@ -179,7 +236,8 @@ function serializeState(state) {
     cycleCount: state.cycleCount,
     todayCount: state.todayCount,
     todayDate: state.todayDate,
-    dndWasOn: state.dndWasOn === true
+    dndWasOn: state.dndWasOn === true,
+    pendingPhase: normalizedPending(state.pendingPhase)
   }, null, 2) + "\n"
 }
 
@@ -210,6 +268,12 @@ function labelFor(phase) {
   return "Pomodoro"
 }
 
+function startLabel(phase) {
+  if (phase === "break") return "a break"
+  if (phase === "longBreak") return "a long break"
+  return "a focus session"
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     PHASES: PHASES,
@@ -225,12 +289,16 @@ if (typeof module !== "undefined") {
     isPaused: isPaused,
     remainingMs: remainingMs,
     completePhase: completePhase,
+    skipPhase: skipPhase,
+    phaseToStart: phaseToStart,
+    completionNotice: completionNotice,
     resolveState: resolveState,
     parseState: parseState,
     serializeState: serializeState,
     statePath: statePath,
     formatRemaining: formatRemaining,
     glyphFor: glyphFor,
-    labelFor: labelFor
+    labelFor: labelFor,
+    startLabel: startLabel
   }
 }

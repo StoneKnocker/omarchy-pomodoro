@@ -4,6 +4,11 @@ A focus timer in the [Omarchy](https://omarchy.org) v4 bar: work/break
 cycles with a long break every fourth round, automatic Do Not Disturb
 during focus, and a session counter for the day.
 
+When a work or break period ends, the timer stops and a desktop notification
+asks you to start the next round — it never auto-starts. Only a work period
+that actually runs to 0 counts as done; skip, reset, and other interrupts
+leave today's count unchanged.
+
 The whole session lives in a state file keyed to the wall clock, so a shell
 restart resumes the countdown exactly, and every monitor's bar shows the
 same session (side effects run once, on one instance).
@@ -12,13 +17,14 @@ same session (side effects run once, on one instance).
 
 | Action | Effect |
 | --- | --- |
-| Left click | Start a focus session / pause / resume |
-| Right click | Skip to the next phase |
-| Middle click | Reset to idle (keeps today's count) |
+| Left click | Start the pending phase / pause / resume |
+| Right click | Skip to the next phase (does not count unfinished work) |
+| Middle click | Reset to idle (keeps today's completed count) |
 
 The chip shows the remaining time while a session runs, dims while paused,
 and takes the bar's active color during focus. DND turns on for focus
-phases and restores your pre-session setting afterwards.
+phases and restores your pre-session setting afterwards, so the end-of-phase
+notification can land.
 
 From scripts or keybindings:
 
