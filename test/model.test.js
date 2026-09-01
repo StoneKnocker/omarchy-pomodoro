@@ -7,13 +7,14 @@ const T0 = Date.parse('2026-08-02T10:00:00')
 // ---- config validation ------------------------------------------------------
 
 assert.deepEqual(config, {
-  workMinutes: 25, breakMinutes: 5, longBreakMinutes: 15, cyclesPerLong: 4, autoDnd: true
+  workMinutes: 25, breakMinutes: 5, autoDnd: true
 })
 assert.equal(model.readConfig({ workMinutes: 50 }).workMinutes, 50)
 assert.equal(model.readConfig({ workMinutes: 0 }).workMinutes, 25, 'zero is invalid')
 assert.equal(model.readConfig({ workMinutes: 'x' }).workMinutes, 25)
-assert.equal(model.readConfig({ cyclesPerLong: 99 }).cyclesPerLong, 4, 'out of range')
 assert.equal(model.readConfig({ autoDnd: false }).autoDnd, false)
+assert.equal(model.readConfig({ longBreakMinutes: 15, cyclesPerLong: 4 }).breakMinutes, 5,
+  'legacy long-break settings are ignored')
 
 // ---- session flow -----------------------------------------------------------
 
@@ -65,38 +66,39 @@ skipped = model.skipPhase(skipped, T0 + 6 * 60000, config)
 assert.equal(skipped.phase, 'work')
 assert.equal(skipped.todayCount, 0)
 
-// Every fourth finished work earns a pending long break.
+// Completing work always yields a 5-minute break, including after the fourth cycle.
 let s4 = model.idleState()
 for (let i = 0; i < 4; i++) {
   s4 = model.startPhase(s4, model.phaseToStart(s4), T0, config)
   assert.equal(s4.phase, 'work')
   s4 = model.completePhase(s4, T0 + 25 * 60000, config)
-  if (i < 3) {
-    assert.equal(s4.phase, 'idle')
-    assert.equal(s4.pendingPhase, 'break', `cycle ${i + 1} takes a short break`)
-    s4 = model.startPhase(s4, s4.pendingPhase, T0, config)
-    assert.equal(s4.phase, 'break')
-    s4 = model.completePhase(s4, T0 + 5 * 60000, config)
-    assert.equal(s4.phase, 'idle')
-    assert.equal(s4.pendingPhase, 'work')
-  }
+  assert.equal(s4.phase, 'idle')
+  assert.equal(s4.pendingPhase, 'break', `cycle ${i + 1} takes a 5-minute break`)
+  s4 = model.startPhase(s4, s4.pendingPhase, T0, config)
+  assert.equal(s4.phase, 'break')
+  assert.equal(model.remainingMs(s4, T0), 5 * 60000)
+  s4 = model.completePhase(s4, T0 + 5 * 60000, config)
+  assert.equal(s4.phase, 'idle')
+  assert.equal(s4.pendingPhase, 'work')
 }
-assert.equal(s4.phase, 'idle')
-assert.equal(s4.pendingPhase, 'longBreak')
 assert.equal(s4.todayCount, 4)
-assert.deepEqual(model.completionNotice('work', s4), {
+assert.deepEqual(model.completionNotice('work', {
+  pendingPhase: 'break', todayCount: 4
+}), {
   title: 'Focus complete',
-  body: '4 done today. Click the bar to start your long break.'
+  body: '4 done today. Click the bar to start your break.'
 })
 
 // Breaks do not increment counters; completing one idles with pending work.
+s4 = model.startPhase(s4, 'work', T0, config)
+s4 = model.completePhase(s4, T0 + 25 * 60000, config)
 s4 = model.startPhase(s4, s4.pendingPhase, T0, config)
-assert.equal(s4.phase, 'longBreak')
-const afterBreak = model.completePhase(s4, T0 + 15 * 60000, config)
+assert.equal(s4.phase, 'break')
+const afterBreak = model.completePhase(s4, T0 + 5 * 60000, config)
 assert.equal(afterBreak.phase, 'idle')
 assert.equal(afterBreak.pendingPhase, 'work')
-assert.equal(afterBreak.todayCount, 4)
-assert.equal(model.completionNotice('longBreak', afterBreak).title, 'Long break over')
+assert.equal(afterBreak.todayCount, 5)
+assert.equal(model.completionNotice('break', afterBreak).title, 'Break over')
 
 // ---- restart reconciliation -------------------------------------------------
 
@@ -148,9 +150,12 @@ assert.equal(model.statePath('/custom', '/home/u'), '/custom/omarchy/pomodoro.js
 assert.equal(model.formatRemaining(0), '0:00')
 assert.equal(model.formatRemaining(61000), '1:01')
 assert.ok(model.glyphFor('work').length > 0)
-assert.equal(model.labelFor('longBreak'), 'Long break')
+assert.equal(model.labelFor('break'), 'Break')
 assert.equal(model.startLabel('break'), 'a break')
-assert.equal(model.parseState('{"phase":"idle","pendingPhase":"longBreak"}').pendingPhase, 'longBreak')
+assert.equal(model.parseState('{"phase":"idle","pendingPhase":"longBreak"}').pendingPhase, 'break',
+  'legacy long-break pending state becomes a short break')
+assert.equal(model.parseState('{"phase":"longBreak"}').phase, 'break',
+  'a persisted long-break session resumes as a short break')
 assert.equal(model.parseState('{"phase":"idle","pendingPhase":"nap"}').pendingPhase, 'work')
 
 console.log('ok - pomodoro model')

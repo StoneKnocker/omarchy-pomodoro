@@ -11,13 +11,11 @@
 // user to click when they are ready. Only a work phase that actually reached
 // 0 remaining increments todayCount / cycleCount.
 
-var PHASES = ["idle", "work", "break", "longBreak"]
+var PHASES = ["idle", "work", "break"]
 
 var DEFAULTS = {
   workMinutes: 25,
   breakMinutes: 5,
-  longBreakMinutes: 15,
-  cyclesPerLong: 4,
   autoDnd: true
 }
 
@@ -41,12 +39,9 @@ function readConfig(settings) {
     var n = Number(value)
     return isFinite(n) && n >= 1 && n <= 240 ? Math.floor(n) : fallback
   }
-  var cycles = Number(s.cyclesPerLong)
   return {
     workMinutes: minutes(s.workMinutes, DEFAULTS.workMinutes),
     breakMinutes: minutes(s.breakMinutes, DEFAULTS.breakMinutes),
-    longBreakMinutes: minutes(s.longBreakMinutes, DEFAULTS.longBreakMinutes),
-    cyclesPerLong: isFinite(cycles) && cycles >= 1 && cycles <= 12 ? Math.floor(cycles) : DEFAULTS.cyclesPerLong,
     autoDnd: s.autoDnd === false ? false : DEFAULTS.autoDnd
   }
 }
@@ -54,16 +49,12 @@ function readConfig(settings) {
 function phaseDurationMs(phase, config) {
   if (phase === "work") return config.workMinutes * 60000
   if (phase === "break") return config.breakMinutes * 60000
-  if (phase === "longBreak") return config.longBreakMinutes * 60000
   return 0
 }
 
-// The phase that follows a completed one. Completing work increments the
-// cycle; every cyclesPerLong-th work earns the long break.
-function nextPhase(completedPhase, cycleCountAfter, config) {
-  if (completedPhase === "work")
-    return cycleCountAfter % config.cyclesPerLong === 0 ? "longBreak" : "break"
-  return "work"
+// The phase that follows a completed one. Work always yields a short break.
+function nextPhase(completedPhase) {
+  return completedPhase === "work" ? "break" : "work"
 }
 
 function dayKey(nowMs) {
@@ -82,14 +73,20 @@ function withToday(state, nowMs) {
   return next
 }
 
+function normalizedPhase(phase) {
+  if (phase === "longBreak") return "break"
+  if (PHASES.indexOf(phase) !== -1) return phase
+  return "idle"
+}
+
 function normalizedPending(phase) {
-  if (phase === "break" || phase === "longBreak" || phase === "work") return phase
+  if (phase === "break" || phase === "longBreak") return "break"
   return "work"
 }
 
 function cloneState(state) {
   return {
-    phase: state.phase,
+    phase: normalizedPhase(state.phase),
     endsAtMs: state.endsAtMs,
     pausedRemainingMs: state.pausedRemainingMs,
     cycleCount: state.cycleCount,
@@ -109,8 +106,8 @@ function phaseToStart(state) {
 // Start a phase now.
 function startPhase(state, phase, nowMs, config) {
   var next = withToday(state, nowMs)
-  next.phase = phase
-  next.endsAtMs = Number(nowMs) + phaseDurationMs(phase, config)
+  next.phase = normalizedPhase(phase)
+  next.endsAtMs = Number(nowMs) + phaseDurationMs(next.phase, config)
   next.pausedRemainingMs = 0
   return next
 }
@@ -152,13 +149,7 @@ function completePhase(state, nowMs, config) {
     next.cycleCount = next.cycleCount + 1
     next.todayCount = next.todayCount + 1
   }
-  var following
-  if (next.phase === "work") {
-    following = finished ? nextPhase("work", next.cycleCount, config) : "break"
-  } else {
-    following = "work"
-  }
-  next.pendingPhase = following
+  next.pendingPhase = nextPhase(next.phase)
   next.phase = "idle"
   next.endsAtMs = 0
   next.pausedRemainingMs = 0
@@ -166,12 +157,11 @@ function completePhase(state, nowMs, config) {
 }
 
 // User skip: jump to the next phase immediately without treating an
-// unfinished work period as done. Incomplete work always yields a short
-// break, never a long break.
+// unfinished work period as done. Incomplete work still yields a break.
 function skipPhase(state, nowMs, config) {
   var next = withToday(cloneState(state), nowMs)
   if (next.phase === "idle") return next
-  var following = next.phase === "work" ? "break" : "work"
+  var following = nextPhase(next.phase)
   next.pendingPhase = following
   return startPhase(next, following, nowMs, config)
 }
@@ -180,17 +170,13 @@ function skipPhase(state, nowMs, config) {
 // is not a completion (e.g. idle → work on user click).
 function completionNotice(fromPhase, state) {
   if (fromPhase === "work") {
-    var nextLabel = state.pendingPhase === "longBreak" ? "your long break" : "your break"
     return {
       title: "Focus complete",
-      body: state.todayCount + " done today. Click the bar to start " + nextLabel + "."
+      body: state.todayCount + " done today. Click the bar to start your break."
     }
   }
-  if (fromPhase === "break") {
+  if (fromPhase === "break" || fromPhase === "longBreak") {
     return { title: "Break over", body: "Click the bar to start focusing." }
-  }
-  if (fromPhase === "longBreak") {
-    return { title: "Long break over", body: "Click the bar to start focusing." }
   }
   return null
 }
@@ -216,7 +202,7 @@ function parseState(text) {
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return idleState()
   var state = idleState()
-  if (PHASES.indexOf(parsed.phase) !== -1) state.phase = parsed.phase
+  state.phase = normalizedPhase(parsed.phase)
   var numbers = ["endsAtMs", "pausedRemainingMs", "cycleCount", "todayCount"]
   for (var i = 0; i < numbers.length; i++) {
     var value = Number(parsed[numbers[i]])
@@ -257,20 +243,18 @@ function formatRemaining(ms) {
 
 function glyphFor(phase) {
   if (phase === "work") return "󰔟"
-  if (phase === "break" || phase === "longBreak") return "󰅶"
+  if (phase === "break") return "󰅶"
   return "󱎫"
 }
 
 function labelFor(phase) {
   if (phase === "work") return "Focus"
   if (phase === "break") return "Break"
-  if (phase === "longBreak") return "Long break"
   return "Pomodoro"
 }
 
 function startLabel(phase) {
   if (phase === "break") return "a break"
-  if (phase === "longBreak") return "a long break"
   return "a focus session"
 }
 

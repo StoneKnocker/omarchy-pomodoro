@@ -1,7 +1,7 @@
 # Pomodoro
 
 A focus timer in the [Omarchy](https://omarchy.org) v4 bar: work/break
-cycles with a long break every fourth round, automatic Do Not Disturb
+cycles (25 minutes focus, 5 minutes rest), automatic Do Not Disturb
 during focus, and a session counter for the day.
 
 When a work or break period ends, the timer stops and a desktop notification
@@ -46,9 +46,7 @@ Inline on the bar layout entry in `~/.config/omarchy/shell.json`
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `workMinutes` | `25` | Focus phase length |
-| `breakMinutes` | `5` | Short break length |
-| `longBreakMinutes` | `15` | Long break length |
-| `cyclesPerLong` | `4` | Focus phases per long break |
+| `breakMinutes` | `5` | Break length |
 | `autoDnd` | `true` | Silence notifications during focus |
 
 ## Tests
