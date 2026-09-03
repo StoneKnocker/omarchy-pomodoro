@@ -99,14 +99,29 @@ BarWidget {
     persist(next)
   }
 
-  function startOrToggle() {
+  function startPhase(requestedPhase) {
     var now = Date.now()
+    var target = requestedPhase ? PomodoroModel.normalizedPhase(requestedPhase) : ""
+    if (!target || target === "idle") {
+      target = PomodoroModel.phaseToStart(session)
+    }
+
     if (session.phase === "idle") {
-      var started = PomodoroModel.startPhase(
-        session, PomodoroModel.phaseToStart(session), now, config)
+      var started = PomodoroModel.startPhase(session, target, now, config)
       started.dndWasOn = dndActive()
       applyDnd(started)
       persist(started)
+    } else if (session.phase === target) {
+      if (PomodoroModel.isPaused(session)) {
+        persist(PomodoroModel.resume(session, now))
+      }
+    }
+  }
+
+  function startOrToggle() {
+    var now = Date.now()
+    if (session.phase === "idle") {
+      startPhase()
     } else if (PomodoroModel.isPaused(session)) {
       persist(PomodoroModel.resume(session, now))
     } else {
@@ -156,10 +171,19 @@ BarWidget {
     if (!leader || fromPhase === state.phase) return
     var notice = PomodoroModel.completionNotice(fromPhase, state)
     if (!notice) return
+    var targetPhase = PomodoroModel.phaseToStart(state)
+    var execArgv = PomodoroModel.notificationExecArgv(targetPhase)
+    var execHint = "string:omarchy-exec-argv:" + JSON.stringify(execArgv)
+    var glyphHint = "string:omarchy-glyph:" + PomodoroModel.glyphFor(targetPhase)
     // App name "notify-send" + critical is the shell's DND-bypass so the
     // reminder is visible even if the user had Do Not Disturb on before
     // the session (applyDnd restores that preference first).
-    notifyProcess.command = ["notify-send", "-u", "critical", "-a", "notify-send", notice.title, notice.body]
+    notifyProcess.command = [
+      "notify-send", "-u", "critical", "-a", "notify-send",
+      "-h", glyphHint,
+      "-h", execHint,
+      notice.title, notice.body
+    ]
     notifyProcess.running = true
   }
 
@@ -168,9 +192,19 @@ BarWidget {
     command: ["notify-send", "-u", "critical", "-a", "notify-send", "Pomodoro", ""]
   }
 
-  // Scriptable surface: omarchy-shell community.pomodoro toggle|skip|reset|status
+  // Scriptable surface: omarchy-shell community.pomodoro toggle|skip|reset|status|start|startPhase
   IpcHandler {
     target: "community.pomodoro"
+
+    function start(): string {
+      root.startPhase()
+      return root.session.phase
+    }
+
+    function startPhase(phase: string): string {
+      root.startPhase(phase)
+      return root.session.phase
+    }
 
     function toggle(): string {
       root.startOrToggle()

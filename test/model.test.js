@@ -158,4 +158,17 @@ assert.equal(model.parseState('{"phase":"longBreak"}').phase, 'break',
   'a persisted long-break session resumes as a short break')
 assert.equal(model.parseState('{"phase":"idle","pendingPhase":"nap"}').pendingPhase, 'work')
 
+// ---- notification click action helpers --------------------------------------
+
+assert.deepEqual(model.notificationExecArgv('work'),
+  ['omarchy-shell', 'community.pomodoro', 'startPhase', 'work'])
+assert.deepEqual(model.notificationExecArgv('break'),
+  ['omarchy-shell', 'community.pomodoro', 'startPhase', 'break'])
+assert.deepEqual(model.notificationExecArgv('longBreak'),
+  ['omarchy-shell', 'community.pomodoro', 'startPhase', 'break'])
+assert.deepEqual(model.notificationExecArgv(model.phaseToStart(s)),
+  ['omarchy-shell', 'community.pomodoro', 'startPhase', 'break'])
+assert.deepEqual(model.notificationExecArgv(model.phaseToStart(afterBreak)),
+  ['omarchy-shell', 'community.pomodoro', 'startPhase', 'work'])
+
 console.log('ok - pomodoro model')

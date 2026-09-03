@@ -181,6 +181,11 @@ function completionNotice(fromPhase, state) {
   return null
 }
 
+function notificationExecArgv(phase) {
+  var target = normalizedPending(phase)
+  return ["omarchy-shell", "community.pomodoro", "startPhase", target]
+}
+
 // Reconcile persisted state against the wall clock after a load: a running
 // phase whose end passed while we were away completes once (and stops at
 // idle). We never chain through later phases — that would auto-start and
@@ -283,6 +288,8 @@ if (typeof module !== "undefined") {
     formatRemaining: formatRemaining,
     glyphFor: glyphFor,
     labelFor: labelFor,
-    startLabel: startLabel
+    startLabel: startLabel,
+    normalizedPhase: normalizedPhase,
+    notificationExecArgv: notificationExecArgv
   }
 }

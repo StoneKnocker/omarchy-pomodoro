@@ -58,11 +58,17 @@ assert.match(widget, /dndWasOn/, 'the pre-session DND state is restored, not bli
 // Critical + app-name notify-send is how omarchy-shell lets a toast through DND.
 assert.equal((widget.match(/\bProcess\s*\{/g) || []).length, 1)
 assert.match(widget, /\["notify-send", "-u", "critical", "-a", "notify-send"/)
+assert.match(widget, /PomodoroModel\.notificationExecArgv/,
+  'notification click action argv comes from the model')
+assert.match(widget, /omarchy-exec-argv/,
+  'notification card click executes the action argv')
 assert.doesNotMatch(widget, /execDetached|bash -c|sh -c/)
 
 // Scriptable surface.
 assert.match(widget, /IpcHandler \{/)
 assert.match(widget, /target: "community\.pomodoro"/)
+assert.match(widget, /function start\(\): string/, 'start IPC method is exposed')
+assert.match(widget, /function startPhase\(phase: string\): string/, 'startPhase IPC method is exposed')
 
 assert.doesNotMatch(widget, /#[0-9a-fA-F]{6}/, 'no hard-coded colors')
 
